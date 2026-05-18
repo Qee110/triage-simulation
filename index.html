@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emergency Department Triage Simulation</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        h1, h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 20px; }
+        .card { background: #ecf0f1; padding: 15px; border-radius: 8px; }
+        label { display: block; margin-top: 10px; font-weight: bold; font-size: 0.9em;}
+        input { width: 100%; padding: 8px; margin-top: 5px; border: 1px solid #bdc3c7; border-radius: 4px; box-sizing: border-box;}
+        button { background-color: #3498db; color: white; border: none; padding: 15px 30px; font-size: 16px; border-radius: 5px; cursor: pointer; display: block; width: 100%; font-weight: bold; margin-top: 20px;}
+        button:hover { background-color: #2980b9; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #bdc3c7; padding: 12px; text-align: left; }
+        th { background-color: #34495e; color: white; }
+        .deteriorated { background-color: #ffcccc; color: #c0392b; font-weight: bold; }
+        .chart-container { width: 100%; max-width: 600px; margin: 40px auto 0; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>ED Triage & Congestion Simulation</h1>
+    <p>Adjust the parameters below and run the simulation to see how unit congestion affects patient wait times and causes medical deterioration.</p>
+
+    <h2>1. System State Configuration</h2>
+    <div class="grid">
+        <div class="card">
+            <h3>ICU (Target Severity: 8.0)</h3>
+            <label>Capacity:</label> <input type="number" id="cap_icu" value="2">
+            <label>Current Wait Time (hrs):</label> <input type="number" step="0.1" id="wait_icu" value="0.0">
+        </div>
+        <div class="card">
+            <h3>ER (Target Severity: 5.0)</h3>
+            <label>Capacity:</label> <input type="number" id="cap_er" value="5">
+            <label>Current Wait Time (hrs):</label> <input type="number" step="0.1" id="wait_er" value="2.0">
+        </div>
+        <div class="card">
+            <h3>Fast Track (Target Severity: 2.0)</h3>
+            <label>Capacity:</label> <input type="number" id="cap_ft" value="10">
+            <label>Current Wait Time (hrs):</label> <input type="number" step="0.1" id="wait_ft" value="0.5">
+        </div>
+    </div>
+
+    <h2>2. Patient Arrivals (Initial Severity 0-10)</h2>
+    <div class="grid">
+        <div class="card">
+            <label>Patient 1 Severity (Critical):</label> <input type="number" step="0.1" id="p1_sev" value="8.5">
+        </div>
+        <div class="card">
+            <label>Patient 2 Severity (Moderate):</label> <input type="number" step="0.1" id="p2_sev" value="5.0">
+        </div>
+        <div class="card">
+            <label>Patient 3 Severity (Minor):</label> <input type="number" step="0.1" id="p3_sev" value="1.5">
+        </div>
+    </div>
+
+    <button onclick="runSimulation()">Run Simulation</button>
+
+    <div id="results" style="display:none;">
+        <h2>Simulation Results</h2>
+        <table id="resultTable">
+            <thead>
+                <tr>
+                    <th>Patient</th>
+                    <th>Initial ESI / Sev</th>
+                    <th>Assigned Unit</th>
+                    <th>Exp. Wait (hrs)</th>
+                    <th>Final Severity</th>
+                    <th>Final ESI</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+
+        <div class="chart-container">
+            <canvas id="congestionChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<script>
+    let chartInstance = null;
+
+    function getESI(severity) {
+        if (severity >= 8) return 1;
+        if (severity >= 6) return 2;
+        if (severity >= 4) return 3;
+        if (severity >= 2) return 4;
+        return 5;
+    }
+
+    function runSimulation() {
+        // Constants
+        const lambda = 0.5, beta = 0.5, delta = 0.4;
+        const targets = [8.0, 5.0, 2.0];
+        const unitNames = ["ICU", "ER", "Fast Track"];
+
+        // Read Inputs
+        const capacities = [
+            parseInt(document.getElementById('cap_icu').value),
+            parseInt(document.getElementById('cap_er').value),
+            parseInt(document.getElementById('cap_ft').value)
+        ];
+        const waitTimes = [
+            parseFloat(document.getElementById('wait_icu').value),
+            parseFloat(document.getElementById('wait_er').value),
+            parseFloat(document.getElementById('wait_ft').value)
+        ];
+        const patients = [
+            { id: 1, sev: parseFloat(document.getElementById('p1_sev').value) },
+            { id: 2, sev: parseFloat(document.getElementById('p2_sev').value) },
+            { id: 3, sev: parseFloat(document.getElementById('p3_sev').value) }
+        ];
+
+        let assignments = [];
+        let assignedCounts = [0, 0, 0];
+
+        // 1. Utility & SoftMax
+        patients.forEach(p => {
+            let utilities = [];
+            for (let j = 0; j < 3; j++) {
+                utilities.push(-Math.abs(p.sev - targets[j]) - (lambda * waitTimes[j]));
+            }
+            
+            let expU = utilities.map(Math.exp);
+            let sumExpU = expU.reduce((a, b) => a + b, 0);
+            let probabilities = expU.map(u => u / sumExpU);
+            
+            let bestUnit = probabilities.indexOf(Math.max(...probabilities));
+            assignments.push(bestUnit);
+            assignedCounts[bestUnit]++;
+        });
+
+        // 2. Queue & New Wait Times
+        let newWaitTimes = [];
+        for (let j = 0; j < 3; j++) {
+            newWaitTimes.push(waitTimes[j] + Math.max(0, assignedCounts[j] - capacities[j]) * beta);
+        }
+
+        // 3. Deterioration & Table Generation
+        const tbody = document.querySelector("#resultTable tbody");
+        tbody.innerHTML = ""; // Clear old results
+
+        patients.forEach((p, i) => {
+            let assignedUnit = assignments[i];
+            let expWait = newWaitTimes[assignedUnit];
+            let oldESI = getESI(p.sev);
+            
+            let newSev = p.sev + (expWait * delta);
+            let newESI = getESI(newSev);
+
+            let row = document.createElement("tr");
+            let deteriorated = newESI < oldESI ? true : false;
+            if (deteriorated) row.className = "deteriorated";
+
+            row.innerHTML = `
+                <td>Patient ${p.id}</td>
+                <td>ESI ${oldESI} (S=${p.sev.toFixed(1)})</td>
+                <td><b>${unitNames[assignedUnit]}</b></td>
+                <td>${expWait.toFixed(2)} hrs</td>
+                <td>${newSev.toFixed(2)}</td>
+                <td>ESI ${newESI} ${deteriorated ? '⚠️ (WORSENED)' : ''}</td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        document.getElementById("results").style.display = "block";
+        updateChart(capacities, assignedCounts);
+    }
+
+    function updateChart(capacities, assigned) {
+        const ctx = document.getElementById('congestionChart').getContext('2d');
+        if (chartInstance) chartInstance.destroy(); // destroy old chart
+
+        chartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['ICU', 'ER', 'Fast Track'],
+                datasets: [
+                    { label: 'Capacity', data: capacities, backgroundColor: '#34495e' },
+                    { label: 'Assigned Patients', data: assigned, backgroundColor: '#3498db' }
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: { y: { beginAtZero: true, title: { display: true, text: 'Number of Patients' } } },
+                plugins: { title: { display: true, text: 'Unit Congestion Analysis' } }
+            }
+        });
+    }
+</script>
+
+</body>
+</html>
