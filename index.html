@@ -541,6 +541,7 @@
                     <div id="patientInputs" class="grid-3"></div>
 
                     <div class="button-row">
+                        <button class="primary-btn" type="button" onclick="addPatient()">Add another patient</button>
                         <button class="secondary-btn" type="button" onclick="resetDefaults()">Reset sample values</button>
                     </div>
                 </section>
@@ -783,15 +784,6 @@
                     </div>
                 </section>
 
-                <section class="panel">
-                    <div class="empty-state">
-                        <h3 style="margin-bottom: 8px;">What changed from the old screen</h3>
-                        <p class="note">
-                            The page now follows the case study more closely, uses simpler labels, shows missing required tables,
-                            and keeps all main values editable so you can test different scenarios easily.
-                        </p>
-                    </div>
-                </section>
             </aside>
         </div>
     </div>
@@ -808,6 +800,7 @@
             { name: "Patient 2", severity: 5.0 },
             { name: "Patient 3", severity: 1.5 }
         ];
+        let patientState = patientDefaults.map((patient) => ({ ...patient }));
 
         function severityToEsi(severity) {
             if (severity >= 8) return "ESI 1-2";
@@ -835,11 +828,14 @@
 
         function createPatientInputs() {
             const wrap = document.getElementById("patientInputs");
-            wrap.innerHTML = patientDefaults.map((patient, index) => `
+            wrap.innerHTML = patientState.map((patient, index) => `
                 <div class="patient-card">
                     <div class="patient-head">
                         <h3>${patient.name}</h3>
-                        <span class="badge" id="esi_badge_${index}">${severityToEsi(patient.severity)}</span>
+                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                            <span class="badge" id="esi_badge_${index}">${severityToEsi(patient.severity)}</span>
+                            ${patientState.length > 3 ? `<button class="secondary-btn" type="button" onclick="removePatient(${index})" style="padding: 7px 10px;">Remove</button>` : ""}
+                        </div>
                     </div>
                     <label for="patient_name_${index}">Patient name</label>
                     <input type="text" id="patient_name_${index}" value="${patient.name}" maxlength="30">
@@ -849,6 +845,34 @@
                     <p class="helper" id="patient_note_${index}">${severityNote(patient.severity)} condition</p>
                 </div>
             `).join("");
+        }
+
+        function syncPatientStateFromInputs() {
+            patientState = patientState.map((patient, index) => {
+                const nameInput = document.getElementById(`patient_name_${index}`);
+                const severityInput = document.getElementById(`patient_severity_${index}`);
+
+                return {
+                    name: nameInput ? (nameInput.value.trim() || `Patient ${index + 1}`) : patient.name,
+                    severity: severityInput ? parseFloat(severityInput.value) : patient.severity
+                };
+            });
+        }
+
+        function addPatient() {
+            syncPatientStateFromInputs();
+            const nextNumber = patientState.length + 1;
+            patientState.push({
+                name: `Patient ${nextNumber}`,
+                severity: 3.0
+            });
+            createPatientInputs();
+        }
+
+        function removePatient(index) {
+            syncPatientStateFromInputs();
+            patientState.splice(index, 1);
+            createPatientInputs();
         }
 
         function createUnitInputs() {
@@ -884,6 +908,7 @@
         }
 
         function resetDefaults() {
+            patientState = patientDefaults.map((patient) => ({ ...patient }));
             createPatientInputs();
             createUnitInputs();
             document.getElementById("lambda").value = "0.5";
@@ -894,7 +919,7 @@
         }
 
         function readPatients() {
-            return patientDefaults.map((_, index) => ({
+            return patientState.map((_, index) => ({
                 id: index + 1,
                 name: document.getElementById(`patient_name_${index}`).value.trim() || `Patient ${index + 1}`,
                 severity: parseFloat(document.getElementById(`patient_severity_${index}`).value)
